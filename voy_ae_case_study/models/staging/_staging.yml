@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: One row per customer with their country. 1:1 with the customers seed.
+    columns:
+      - name: customer_id
+        description: Primary key, unique per customer.
+        tests:
+          - unique
+          - not_null
+      - name: customer_country
+        description: Customer's country. Two values observed in source data (UK, Brazil).
+        tests:
+          - accepted_values:
+              values: ['United Kingdom', 'Brazil']
+              config:
+                severity: warn   # warn in case new countries are added
+  - name: stg_acq_orders
+    description: >
+      One row per customer with the acquisition taxonomy they were originally
+      acquired into. At the customer level, not at the order level
+      every customer_id appears at most once.
+    columns:
+      - name: customer_id
+        description: Primary key. Not every customer in stg_customers has a row here.
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_activity
+    description: >
+      One row per subscription billing period. Not one row per customer
+      or per subscription, a single subscription_id can have many rows (renewals),
+      and a single customer can have multiple concurrent subscription_ids.
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+      - name: subscription_id
+        tests:
+          - not_null
+      - name: from_date
+        tests:
+          - not_null
+      - name: to_date
+        tests:
+          - not_null

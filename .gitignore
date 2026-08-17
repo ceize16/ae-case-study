@@ -1,0 +1,9 @@
+.dbtvenv/
+.venv/
+voy_ae_case_study/target/
+voy_ae_case_study/dbt_packages/
+voy_ae_case_study/logs/
+voy_ae_case_study/dev.duckdb
+*.duckdb.wal
+__pycache__/
+*.pyc

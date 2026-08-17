@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: One row per customer with country, acquisition taxonomy, and cohort_month.
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_customer_monthly_activity
+    description: >
+      Grain: customer_id x activity_month. One row per customer per calendar
+      month they were active. This is the core analytical table no pre agg,
+      designed for stakeholders/BI tools to slice by any
+      dimension on dim_customers.
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_id
+      - name: activity_month
+        tests:
+          - not_null
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: 
+            - customer_id
+            - activity_month

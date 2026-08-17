@@ -1,0 +1,7 @@
+voy_ae_case_study:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: 'voy_ae_case_study/dev.duckdb'
+      threads: 4
