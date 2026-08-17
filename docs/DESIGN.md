@@ -31,7 +31,7 @@ The three source files look like a data-cleaning exercise, but the real problem 
 
 ```
 staging/        stg_customers, stg_acq_orders, stg_activity
-intermediate/   int_customer_activity_islands
+intermediate/   int_customer_activity
                 int_month_spine
                 int_customer_monthly_activity
 marts/core/     dim_customers
@@ -44,7 +44,7 @@ marts/retention/fct_customer_monthly_status
 
 **Intermediate** is where the grain problem actually gets solved:
 
-- `int_customer_activity_islands` collapses every subscription-period row for a customer, across all their concurrent/sequential `subscription_id`s, into continuous, non-overlapping customer-level active spans, using a gaps-and-islands window-function pattern. This is the model the rest of the pipeline depends on, and it's the one place all the messiness (overlapping subscriptions, duplicate date ranges, renewal noise) gets resolved once rather than being re-handled downstream.
+- `int_customer_activity` collapses every subscription-period row for a customer, across all their concurrent/sequential `subscription_id`s, into continuous, non-overlapping customer-level active spans, using a gaps-and-islands window-function pattern. This is the model the rest of the pipeline depends on, and it's the one place all the messiness (overlapping subscriptions, duplicate date ranges, renewal noise) gets resolved once rather than being re-handled downstream.
 - `int_month_spine` is a reusable calendar-month spine spanning the full observed date range, used both to explode islands into months and to guarantee every month appears later on, including months where a cohort had zero activity, which is what makes churn detectable at all (absence of a row is not the same as zero).
 - `int_customer_monthly_activity` explodes each island across the months it touches, via a range join against the spine, producing customer × month rows.
 
@@ -81,9 +81,9 @@ marts/retention/fct_customer_monthly_status
 
 **"The output table should be something ready to analyse, but probably not a reporting table"**, `fct_customer_monthly_activity` is that table: customer × month grain, not pre-aggregated, but clean enough that a stakeholder can pivot it in a spreadsheet or BI tool without knowing anything about the underlying subscription mess. `mart_cohort_retention` is the optional pre-aggregated reporting table on top, included because a live retention-curve chart re-scanning the full fact table on every dashboard load isn't a good stakeholder experience at this row count.
 
-**"Customers are active, how many subscriptions they have doesn't affect how 'Active' they are"**, this is the single rule the whole pipeline is built around. `int_customer_activity_islands` merges overlapping/concurrent subscription periods per customer before anything downstream is calculated, so a customer with five concurrent products is exactly as "active" as a customer with one.
+**"Customers are active, how many subscriptions they have doesn't affect how 'Active' they are"**, this is the single rule the whole pipeline is built around. `int_customer_activity` merges overlapping/concurrent subscription periods per customer before anything downstream is calculated, so a customer with five concurrent products is exactly as "active" as a customer with one.
 
-**"What sort of time granularity will this be useful for?"**, **Monthly**, chosen deliberately. Billing cycles in the data cluster around 30/90/180/270-day periods; daily grain would show a customer as "inactive" between billing dates that are really just processing gaps, and weekly grain would alias against the quarterly cycle. Monthly is the coarsest grain that avoids both problems, and it's the grain stakeholders actually ask retention questions in ("what's our March cohort's month-3 retention?"). Day-level precision isn't lost, it's preserved one layer down in `int_customer_activity_islands`, and monthly is a reporting-grain decision applied on top, not a data-loss decision.
+**"What sort of time granularity will this be useful for?"**, **Monthly**, chosen deliberately. Billing cycles in the data cluster around 30/90/180/270-day periods; daily grain would show a customer as "inactive" between billing dates that are really just processing gaps, and weekly grain would alias against the quarterly cycle. Monthly is the coarsest grain that avoids both problems, and it's the grain stakeholders actually ask retention questions in ("what's our March cohort's month-3 retention?"). Day-level precision isn't lost, it's preserved one layer down in `int_customer_activity`, and monthly is a reporting-grain decision applied on top, not a data-loss decision.
 
 **"How would AI interact with the data?"**, By querying `fct_customer_monthly_activity` and `mart_cohort_retention` directly, an AI agent (or a text-to-SQL tool) gets clean, documented, customer-grain tables rather than having to reconstruct the subscription-overlap logic itself, which is exactly the kind of derivation an LLM is likely to get subtly wrong. More importantly, `fct_customer_monthly_status`'s single governed `status` column means an AI agent computing "churn rate" and a human analyst computing "churn rate" are guaranteed to get the same number, because neither is re-deriving the definition from scratch. This is the argument for going further and exposing these as dbt Semantic Layer / MetricFlow metrics (or LookML measures) rather than leaving them as ad hoc SQL patterns per dashboard: a governed metric layer is what actually prevents an AI agent from hallucinating its own version of "retention."
 
@@ -106,9 +106,9 @@ Built against dbt + DuckDB locally rather than BigQuery, to avoid GCP setup over
 
 ---
 
-## 8. A concrete example of the reasoning process (the islands bug)
+## 8. A concrete example of the reasoning process 
 
-`int_customer_activity_islands`'s window-function `ORDER BY from_date` initially wasn't fully deterministic: 43% of `activity.csv` rows are exact duplicates of `(customer_id, from_date, to_date)` across different `subscription_id`s (the same customer holding two products on an identical billing cycle), and DuckDB's window frame gave inconsistent results across ties between two separate window function calls in the same query. A singular dbt test (`assert_no_overlapping_period`) caught this immediately, 14,797 overlapping islands on the first run, not zero as expected.
+`int_customer_activity`'s window-function `ORDER BY from_date` initially wasn't fully deterministic: 43% of `activity.csv` rows are exact duplicates of `(customer_id, from_date, to_date)` across different `subscription_id`s (the same customer holding two products on an identical billing cycle), and DuckDB's window frame gave inconsistent results across ties between two separate window function calls in the same query. A singular dbt test (`assert_no_overlapping_period`) caught this immediately, 14,797 overlapping islands on the first run, not zero as expected.
 
 The fix was upstream, not another sort key bolted on: `SELECT DISTINCT` on `(customer_id, from_date, to_date)` before the window step. This is correct both technically (it makes the sort provably unique, verified against the actual data) and semantically (duplicate date ranges across concurrent subscriptions carry no additional information once the model is working at customer grain, which is the whole point of the exercise). This is the clearest example in the build of a test catching a real logic bug rather than rubber-stamping a passing run, and of a design decision worth defending rather than just describing.
 
